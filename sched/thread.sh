@@ -105,6 +105,19 @@ else
     THERMAL_AUTO_STATE="/data/local/tmp/oneplus_thermal_auto"
 fi
 
+# 0.4.60：watch 心跳 + 停用标记（守护自愈用，见 service.sh 的
+# _watch_guardian）。心跳：watch 每轮把当前秒数写进去，守护靠它
+# 判断 watch 是活着还是卡死了；停用标记：thread.sh stop 时落，
+# 守护见标记就自己退出、绝不把手动停掉的 watch 拉回来，watch
+# 正常启动和开机时清掉。
+if [ -n "$SCHED_TEST_ROOT" ]; then
+    WATCH_HEARTBEAT="$SCHED_TEST_ROOT/oneplus_watch_heartbeat"
+    WATCH_DISABLED_MARK="$SCHED_TEST_ROOT/oneplus_watch_disabled"
+else
+    WATCH_HEARTBEAT="/data/local/tmp/oneplus_watch_heartbeat"
+    WATCH_DISABLED_MARK="/data/local/tmp/oneplus_watch_disabled"
+fi
+
 # 0.4.33：进/退游戏自动去温控已抽到 thermal_auto.sh（S2 统一入口，
 # game_sched.sh 和面板都调同一份）。THERMAL_AUTO_STATE 上面已按
 # 测试/真机算好，thermal_auto.sh 不会覆盖已设的值。
@@ -168,7 +181,8 @@ screen_state() {
     command -v dumpsys >/dev/null 2>&1 || { echo "unknown"; return 0; }
     _spf="${TMPDIR:-/data/local/tmp}/oneplus_sched_ss.$$"
     _res="unknown"
-    if dumpsys power > "$_spf" 2>/dev/null && [ -s "$_spf" ]; then
+    # 0.4.60：dumpsys 走 run_to 5 秒超时——同步等它卡死过 watch。
+    if run_to 5 dumpsys power > "$_spf" 2>/dev/null && [ -s "$_spf" ]; then
         _line=$(grep -i "Display Power: state=" "$_spf" | head -n 1)
         case "$_line" in
             *state=OFF*) _res="off" ;;
@@ -257,7 +271,7 @@ auto_mode_tick() {
         _now=$(date +%s)
         if [ -z "$_LAST_DEBUG_LOG" ] || [ $((_now - _LAST_DEBUG_LOG)) -ge 60 ]; then
             if [ "$_screen" = "unknown" ]; then
-                _ev=$(dumpsys power 2>/dev/null | grep -i "display\|screen\|wakefulness\|suspendblocker\|power state" | head -n 3 | tr '\n' '|' | tr -s ' ' | cut -c1-300)
+                _ev=$(run_to 5 dumpsys power 2>/dev/null | grep -i "display\|screen\|wakefulness\|suspendblocker\|power state" | head -n 3 | tr '\n' '|' | tr -s ' ' | cut -c1-300)
                 sched_log "INFO auto-mode check screen=$_screen battery=${_cap:-?}%/${_st:-?} target=$_target applied=${_AUTO_APPLIED:-?} evidence=${_ev:-none}"
             else
                 sched_log "INFO auto-mode check screen=$_screen battery=${_cap:-?}%/${_st:-?} target=$_target applied=${_AUTO_APPLIED:-?}"
@@ -379,7 +393,7 @@ pkg_from_line() {
 pkg_from_dumpsys() {
     _kind="$1"
     command -v dumpsys >/dev/null 2>&1 || return 0
-    _out=$(dumpsys "$_kind" 2>/dev/null | grep -e "mCurrentFocus" -e "mFocusedApp" -e "mResumedActivity" -e "topResumedActivity" 2>/dev/null | head -n 8)
+    _out=$(run_to 5 dumpsys "$_kind" 2>/dev/null | grep -e "mCurrentFocus" -e "mFocusedApp" -e "mResumedActivity" -e "topResumedActivity" 2>/dev/null | head -n 8)
     if [ -z "$_out" ]; then return 0; fi
     echo "$_out" | while IFS= read -r _line; do
         _p=$(pkg_from_line "$_line")
@@ -751,7 +765,7 @@ clean_background_apps() {
     # 两边带空格才能精确匹配（不带空格会把 com.foo 误判进 com.foo.bar）。
     _sys_pkgs=" "
     if command -v pm >/dev/null 2>&1; then
-        _sys_pkgs=" $(pm list packages -s 2>/dev/null | tr '\n' ' ')"
+        _sys_pkgs=" $(run_to 5 pm list packages -s 2>/dev/null | tr '\n' ' ')"
     fi
     _cleaned=""
     for _d in "$PROC"/[0-9]*; do
@@ -797,7 +811,7 @@ clean_background_apps() {
     done
     _n=0
     for _pkg in $_cleaned; do
-        if am force-stop "$_pkg" >/dev/null 2>&1; then
+        if run_to 3 am force-stop "$_pkg" >/dev/null 2>&1; then
             sched_log "INFO 清理后台：force-stop $_pkg"
             _n=$((_n + 1))
         else
@@ -855,7 +869,7 @@ keepalive_battery_whitelist() {
     _done=""
     for _pat in $PEACE_PACKAGES $VALORANT_PACKAGES; do
         case "$_pat" in *.*) ;; *) continue ;; esac
-        if cmd deviceidle whitelist "+$_pat" >/dev/null 2>&1; then
+        if run_to 5 cmd deviceidle whitelist "+$_pat" >/dev/null 2>&1; then
             _done="$_done $_pat"
         fi
     done
@@ -878,14 +892,14 @@ keepalive_battery_whitelist() {
 _keepalive_assert_pkg() {
     _pkg="$1"
     if command -v cmd >/dev/null 2>&1; then
-        cmd appops set "$_pkg" RUN_ANY_IN_BACKGROUND allow >/dev/null 2>&1 || return 1
-        cmd appops set "$_pkg" RUN_IN_BACKGROUND allow >/dev/null 2>&1 || return 1
-        cmd activity set-standby-bucket "$_pkg" active >/dev/null 2>&1 || return 1
+        run_to 5 cmd appops set "$_pkg" RUN_ANY_IN_BACKGROUND allow >/dev/null 2>&1 || return 1
+        run_to 5 cmd appops set "$_pkg" RUN_IN_BACKGROUND allow >/dev/null 2>&1 || return 1
+        run_to 5 cmd activity set-standby-bucket "$_pkg" active >/dev/null 2>&1 || return 1
     else
         command -v appops >/dev/null 2>&1 || return 1
-        appops set "$_pkg" RUN_ANY_IN_BACKGROUND allow >/dev/null 2>&1 || return 1
-        appops set "$_pkg" RUN_IN_BACKGROUND allow >/dev/null 2>&1 || return 1
-        am set-standby-bucket "$_pkg" active >/dev/null 2>&1 || return 1
+        run_to 5 appops set "$_pkg" RUN_ANY_IN_BACKGROUND allow >/dev/null 2>&1 || return 1
+        run_to 5 appops set "$_pkg" RUN_IN_BACKGROUND allow >/dev/null 2>&1 || return 1
+        run_to 5 am set-standby-bucket "$_pkg" active >/dev/null 2>&1 || return 1
     fi
     return 0
 }
@@ -921,7 +935,7 @@ capture_game_exit_info() {
     command -v dumpsys >/dev/null 2>&1 || return 0
     for _pkg in $PEACE_PACKAGES $VALORANT_PACKAGES; do
         case "$_pkg" in *.*) ;; *) continue ;; esac
-        _out=$(dumpsys activity exit-info "$_pkg" 2>/dev/null)
+        _out=$(run_to 5 dumpsys activity exit-info "$_pkg" 2>/dev/null)
         [ -n "$_out" ] || continue
         # 只留第一条记录：记录以 ApplicationExitInfo #N 或 #N:
         # 起头，第二条出现就停；没有这种分行时兜底只看前 12 行。
@@ -1381,6 +1395,11 @@ case "$CMD" in
             fi
         fi
         echo $$ > "$WATCH_PIDFILE" 2>/dev/null || true
+        # 0.4.60：正常启动先清停用标记（上次 stop 落的），再写第一拍
+        # 心跳——守护按心跳计时，不先写一拍，守护在开机头几分钟会
+        # 把刚起来的 watch 误判成卡死。
+        rm -f "$WATCH_DISABLED_MARK" 2>/dev/null || true
+        date +%s > "$WATCH_HEARTBEAT" 2>/dev/null || true
         echo "watch 启动：每 ${_interval}s 识别一次前台应用，换应用就重绑（PID $$，停用：thread.sh stop）"
         LAST_PID=""; LAST_PKG=""; LAST_IME_PID=""
         _bind_broken_until=0
@@ -1452,7 +1471,7 @@ log_wakeup_sources() {
         # unreadable，可能是没挂载或 SELinux 拦了）。改走 dumpsys power
         # 的唤醒锁列表——那是系统服务给的，不走 debugfs。直接记原文
         # 前 5 行锁名，格式由读日志的人认，不在脚本里猜格式。
-        _pw=$(dumpsys power 2>/dev/null | grep -i "WAKE_LOCK" | head -n 5 | cut -c1-120 | tr '\n' '|' | tr -s ' ')
+        _pw=$(run_to 5 dumpsys power 2>/dev/null | grep -i "WAKE_LOCK" | head -n 5 | cut -c1-120 | tr '\n' '|' | tr -s ' ')
         if [ -n "$_pw" ]; then
             sched_log "INFO wake-locks dumpsys: ${_pw}"
         else
@@ -1656,6 +1675,10 @@ log_wakeup_sources() {
                 auto_mode_tick
             fi
             _LAST_CYCLE=$(date +%s)
+            # 0.4.60：心跳落盘。守护（service.sh）每 60 秒看一眼这个
+            # 文件，超过 180 秒没更新就判定 watch 卡死、自动重启。
+            # 每轮一次小写，不记日志、不回显，开销可忽略。
+            echo "$_LAST_CYCLE" > "$WATCH_HEARTBEAT" 2>/dev/null || true
             # 0.4.31：sleep 兜底。/system/bin 万一在运行中途掉线（极少见），
             # sleep 失效会让 watch 空转；失败就空循环等约 1 秒再继续，
             # 下一轮循环顶的守卫会接着处理。
@@ -1664,6 +1687,9 @@ log_wakeup_sources() {
         exit 0
         ;;
     stop)
+        # 0.4.60：先落停用标记再停——守护见标记就自己退出，绝不把
+        # 用户手动停掉的 watch 拉回来（下次正常启动时清掉标记）。
+        echo stopped > "$WATCH_DISABLED_MARK" 2>/dev/null || true
         if [ -f "$WATCH_PIDFILE" ]; then
             _old=$(cat "$WATCH_PIDFILE" 2>/dev/null)
             if _watch_pid_alive "$_old"; then

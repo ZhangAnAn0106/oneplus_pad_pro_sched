@@ -31,6 +31,20 @@
 
 - **module.prop 的 description 只写功能清单，永不追加版本改动**（2026-11-21 她定的）。版本流水账只写本 README 的更新记录区。0.4.58 起 description 已整段换成功能清单，后续升版只改 version/versionCode，不动 description，除非功能本身增减。
 
+## 0.4.60 更新（2026-11-22，watch 卡死修复：外部命令超时 + 心跳自愈）
+
+纯 bug 修复。真机现象（2026-11-21 晚）：watch 在 23:00:06 写完最后一行日志后卡死，直到 00:35 重启才恢复，中间约 65 分钟游戏检测、绑核、保活全停（那局的游戏档和去温控是她在面板手动开的）。代码审查定位到两个病根：
+
+- **外部命令无超时**：watch 循环里 dumpsys / cmd / pm / am 全是同步调用，系统服务偶尔卡住一个，watch 就在那一行无限等下去，不报错也不退出。
+- **没有守护**：service.sh 开机只启动 watch 一次，之后再没人看它死活，卡死只能靠重启平板恢复。
+
+修法两处：
+
+- **lib.sh 新增 `run_to <秒数> <命令...>`**：命令放后台跑、stdout 落临时文件、轮询等待，正常结束原样返回输出和退出码；超时杀掉、记一行 WARN、返回 124。watch 路径上的调用点全包上：pkg_from_dumpsys 的 dumpsys window/activity、screen_state / 自动模式取证 / 唤醒源的 dumpsys power、被杀取证的 dumpsys activity exit-info、保活④的 cmd appops / cmd activity（及 appops / am 回退）、保活②的 cmd deviceidle、自动清理的 pm list packages（以上 5 秒）和 am force-stop（3 秒）。面板手动命令、诊断脚本这次不动。
+- **watch 心跳 + service.sh 守护**：watch 每轮把当前秒数写进 `oneplus_watch_heartbeat`；service.sh 启动 watch 时同时启动一个单实例守护（`service.sh guardian` 子命令），每 60 秒查一次心跳，超过 180 秒没更新就杀掉旧 watch 重新拉起并记一行 WARN，拉起时先垫一拍心跳防误判抖动。thread.sh stop 会落 `oneplus_watch_disabled` 停用标记，守护见标记就自己退出，绝不把手动停掉的 watch 拉回来；watch 正常启动和开机时清标记。守护正常巡检不记日志；模块目录没了（已卸载）守护也自己退出。
+
+harness：新增 T108（run_to 快命令原样返回输出与退出码、慢命令超时被杀返回 124 且不残留临时文件并记 WARN；watch 心跳每轮更新、stop 落停用标记；守护三态：心跳新鲜不动 / 心跳过期无标记自动重启并记 WARN、新 watch 接上后不再重复记 / 有停用标记守护自退不拉起）。version 0.4.60 / versionCode 64，description 不动。
+
 ## 0.4.59 更新（2026-11-21，保活补强 + 绑核屡败停放）
 
 两件事，都是 0.4.58 上线当天真机日志逼出来的：

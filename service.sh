@@ -25,6 +25,85 @@ load_config "$MODDIR/sched/config.conf"
 
 if [ -n "${SCHED_TEST_ROOT:-}" ]; then _td="$SCHED_TEST_ROOT"; else _td="/data/local/tmp"; fi
 
+# --- watch 守护（0.4.60）---
+# 病根之二：以前 service.sh 把 watch 拉起来就再也不管，watch 卡死
+# （多半是某个系统命令无限等，见 lib.sh 的 run_to）后永远没人拉起，
+# 只能靠重启平板（2026-11-21 真机卡死约 65 分钟）。守护每 60 秒
+# 看一眼 watch 的心跳文件：超过 180 秒没更新、且没有停用标记
+# （thread.sh stop 落的，用户手动停的不许拉回），就杀掉旧 watch
+# 重新拉起，并记一行 WARN。正常巡检不记日志。
+# WATCH_GUARD_INTERVAL / WATCH_GUARD_STALE 只给模拟测试调小，
+# 生产不设、走默认 60 / 180。
+WATCH_GUARDIAN_PIDFILE="$_td/oneplus_watch_guardian.pid"
+_watch_guardian() {
+    echo $$ > "$WATCH_GUARDIAN_PIDFILE" 2>/dev/null || true
+    _g_interval="${WATCH_GUARD_INTERVAL:-60}"
+    case "$_g_interval" in ''|*[!0-9]*|0) _g_interval=60 ;; esac
+    _g_stale="${WATCH_GUARD_STALE:-180}"
+    case "$_g_stale" in ''|*[!0-9]*|0) _g_stale=180 ;; esac
+    while true; do
+        sleep "$_g_interval"
+        # 停用标记在：用户手动停的，守护自己退出，不跟 stop 打架。
+        if [ -f "$_td/oneplus_watch_disabled" ]; then
+            rm -f "$WATCH_GUARDIAN_PIDFILE" 2>/dev/null
+            return 0
+        fi
+        # 模块目录没了（已卸载）：守护跟着退出，别再试图拉起。
+        if [ ! -f "$MODDIR/sched/thread.sh" ]; then
+            rm -f "$WATCH_GUARDIAN_PIDFILE" 2>/dev/null
+            return 0
+        fi
+        _g_last=$(cat "$_td/oneplus_watch_heartbeat" 2>/dev/null | tr -d ' \t\r\n')
+        case "$_g_last" in ''|*[!0-9]*) _g_last=0 ;; esac
+        _g_now=$(date +%s 2>/dev/null)
+        case "$_g_now" in ''|*[!0-9]*) continue ;; esac
+        [ $((_g_now - _g_last)) -le "$_g_stale" ] && continue
+        # 心跳过期：watch 卡死或已死。pidfile 里的旧 pid 还活着先
+        # 杀（TERM 等 2 秒，不行就 -9——卡在系统调用里的 watch 收
+        # 不到 TERM 的 trap，只能强杀），确认死了再拉新的。
+        _g_old=$(cat "$_td/oneplus_thread_watch.pid" 2>/dev/null | tr -d ' \t\r\n')
+        case "$_g_old" in ''|*[!0-9]*) _g_old="" ;; esac
+        if [ -n "$_g_old" ] && kill -0 "$_g_old" 2>/dev/null; then
+            kill "$_g_old" 2>/dev/null
+            sleep 2
+            kill -9 "$_g_old" 2>/dev/null
+            _g_k=0
+            while kill -0 "$_g_old" 2>/dev/null && [ "$_g_k" -lt 30 ]; do
+                sleep 0.1 2>/dev/null || sleep 1
+                _g_k=$((_g_k + 1))
+            done
+        fi
+        rm -f "$_td/oneplus_thread_watch.pid" 2>/dev/null
+        nohup sh "$MODDIR/sched/thread.sh" watch >> "$LOGFILE" 2>&1 &
+        # 拉起时刻先替新 watch 垫一拍心跳：它自己几秒内就会接上，
+        # 垫这一拍是防守护下一轮巡检抢在它第一拍之前、把刚拉起
+        # 的又误判成卡死（防重启抖动）。
+        date +%s > "$_td/oneplus_watch_heartbeat" 2>/dev/null || true
+        sched_log "WARN watch 心跳超时（>${_g_stale}s），已自动重启"
+    done
+}
+# 守护子命令：service.sh guardian 只跑守护循环，不走开机流程。
+if [ "${1:-}" = "guardian" ]; then
+    _watch_guardian
+    exit 0
+fi
+# 单实例启动：已有一个守护在跑（pid 还活着、且确实是 service.sh）
+# 就不重复起。
+_guardian_start() {
+    if [ -f "$WATCH_GUARDIAN_PIDFILE" ]; then
+        _gold=$(cat "$WATCH_GUARDIAN_PIDFILE" 2>/dev/null | tr -d ' \t\r\n')
+        case "$_gold" in
+            ''|*[!0-9]*) ;;
+            *)
+                if kill -0 "$_gold" 2>/dev/null && tr '\0' ' ' < "/proc/$_gold/cmdline" 2>/dev/null | grep -q 'service\.sh'; then
+                    return 0
+                fi
+                ;;
+        esac
+    fi
+    nohup sh "$MODDIR/service.sh" guardian >> "$LOGFILE" 2>&1 &
+}
+
 # 等待启动完成，最多 90 秒；超时也继续（部分平板 boot_completed 晚到）
 i=0
 while [ "$(/system/bin/getprop sys.boot_completed 2>/dev/null)" != "1" ] && [ $i -lt 90 ]; do
@@ -87,7 +166,10 @@ _service_step "oshare_hook ensure" sh "$MODDIR/sched/oshare_hook.sh" ensure
 # 会撒谎（watch 见 state=game 就跳过 apply，首局游戏跑在均衡档；
 # 残留的 thermal_auto 状态也会让自动去温控跳过）。套用基础模式后、
 # 启动 watch 前清掉，开机即“不在游戏档”是确定的事实。
-rm -f "$_td/oneplus_game_sched_state" "$_td/oneplus_thermal_auto" "$_td/oneplus_thread_state" "$_td/oneplus_auto_mode"
+# 0.4.60：心跳和停用标记也一起清——残留的旧心跳会让守护误判，
+# 残留的停用标记会让守护开机就退出（停用是上次手动停的会话级
+# 决定，不跨重启）。
+rm -f "$_td/oneplus_game_sched_state" "$_td/oneplus_thermal_auto" "$_td/oneplus_thread_state" "$_td/oneplus_auto_mode" "$_td/oneplus_watch_heartbeat" "$_td/oneplus_watch_disabled"
 sched_log "INFO service 已清残留状态文件（开机重建）"
 
 # 线程自动绑定：0.4.3 起默认开（AUTO_WATCH_ON_BOOT=1），开机在后台
@@ -97,6 +179,9 @@ sched_log "INFO service 已清残留状态文件（开机重建）"
 # 不再写死 $_td 下的路径。
 if [ "${AUTO_WATCH_ON_BOOT:-1}" = "1" ]; then
     nohup sh "$MODDIR/sched/thread.sh" watch >> "$LOGFILE" 2>&1 &
+    # 0.4.60：守护跟着 watch 一起起（单实例），watch 卡死自动拉起；
+    # AUTO_WATCH_ON_BOOT=0 时守护也不起（上面那个分支管）。
+    _guardian_start
 else
     sched_log "INFO service AUTO_WATCH_ON_BOOT=0，watch 不启动"
 fi

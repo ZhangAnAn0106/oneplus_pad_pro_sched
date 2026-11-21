@@ -217,6 +217,57 @@ sched_log() {
     if [ -z "${SCHED_LOG_QUIET:-}" ]; then echo "$*"; fi
 }
 
+# --- 外部命令统一超时（0.4.60）---
+# run_to <秒数> <命令...>
+# 病根：watch 循环里 dumpsys / cmd / pm / am 全是同步调用，系统服务
+# 偶尔卡住一个，watch 就在那一行无限等下去（2026-11-21 真机：watch
+# 23:00:06 写完最后一行日志后卡死，约 65 分钟没恢复，直到重启）。
+# run_to 把命令放后台跑、stdout 落临时文件、轮询等它结束：正常结束
+# 就原样吐出临时文件内容并返回原退出码；超过秒数就杀掉、记一行
+# WARN、返回 124（和 GNU timeout 同口径）。调用点多是
+# _out=$(run_to ...) 的命令替换，用法和直接调命令一样。stderr 一律
+# 丢弃（原调用点也都是 2>/dev/null）；超时 WARN 只写日志文件、不走
+# stdout 回显，免得污染命令替换的捕获。临时文件跑完即删，不残留。
+# date 读不到（开机极早期）时退化成普通等待，不会误杀。
+_RUN_TO_SEQ=0
+run_to() {
+    _rt_limit="$1"; shift
+    case "$_rt_limit" in ''|*[!0-9]*|0) _rt_limit=5 ;; esac
+    _RUN_TO_SEQ=$((_RUN_TO_SEQ + 1))
+    _rt_tmp="${TMPDIR:-${SCHED_TEST_ROOT:-/data/local/tmp}}/oneplus_sched_runto.$$_$_RUN_TO_SEQ"
+    "$@" >"$_rt_tmp" 2>/dev/null &
+    _rt_pid=$!
+    _rt_start=$(date +%s 2>/dev/null)
+    case "$_rt_start" in ''|*[!0-9]*) _rt_start=0 ;; esac
+    _rt_deadline=$((_rt_start + _rt_limit))
+    _rt_timedout=0
+    while kill -0 "$_rt_pid" 2>/dev/null; do
+        _rt_now=$(date +%s 2>/dev/null)
+        case "$_rt_now" in ''|*[!0-9]*) _rt_now=0 ;; esac
+        if [ "$_rt_now" -ge "$_rt_deadline" ]; then _rt_timedout=1; break; fi
+        sleep 0.1 2>/dev/null || sleep 1
+    done
+    if [ "$_rt_timedout" = "1" ]; then
+        kill "$_rt_pid" 2>/dev/null
+        _rt_k=0
+        while kill -0 "$_rt_pid" 2>/dev/null && [ "$_rt_k" -lt 10 ]; do
+            sleep 0.1 2>/dev/null || sleep 1
+            _rt_k=$((_rt_k + 1))
+        done
+        kill -9 "$_rt_pid" 2>/dev/null
+        wait "$_rt_pid" 2>/dev/null
+        sched_log "WARN run_to 超时（${_rt_limit}s）已终止：$*" >/dev/null
+        cat "$_rt_tmp" 2>/dev/null
+        rm -f "$_rt_tmp" 2>/dev/null
+        return 124
+    fi
+    wait "$_rt_pid" 2>/dev/null
+    _rt_rc=$?
+    cat "$_rt_tmp" 2>/dev/null
+    rm -f "$_rt_tmp" 2>/dev/null
+    return "$_rt_rc"
+}
+
 # 只在文件存在时写，写失败记 FAIL 不中断。
 write_node() {
     _path="$1"; _val="$2"
