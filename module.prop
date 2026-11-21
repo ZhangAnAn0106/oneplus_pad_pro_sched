@@ -1,0 +1,6 @@
+id=oneplus_pad_pro_sched
+name=OnePlus Pad Pro 性能调度
+version=0.4.59
+versionCode=63
+author=Muse (for Nora)
+description=一加平板 Pro（骁龙 8 Gen 3）性能调度 + 线程调度模块。功能：省电/均衡/性能/游戏四种模式；游戏进程自动检测、进游戏自动调度（线程分类绑核、GPU 下限、uclamp）；进游戏自动清理后台；游戏后台保活（切应用不被杀）；去温控；zram 内存压缩（算法和大小可调）；全局 Vulkan 界面渲染开关；一加互传常开（LSPosed hook 随模块打包、刷模块时自动安装）；Web 面板与分类日志。

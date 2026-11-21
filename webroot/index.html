@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>一加平板 Pro 性能调度</title>
+<style>
+  /* MIUIX / HyperOS 风格：浅灰底 + 白色圆角分组卡 + 小米蓝。亮色默认，
+     跟随系统深色（WebView 认 prefers-color-scheme 时生效）。只改样式，
+     HTML 结构和 JS 一个字没动。 */
+  :root{
+    color-scheme:light dark;
+    --bg:#f2f2f7; --card:#ffffff; --card2:#f5f5f7; --text:#1d1d1f; --muted:#8e8e93;
+    --line:rgba(0,0,0,.06); --accent:#0d84ff; --accent-soft:#e8f2ff;
+    --green:#00b578; --green-soft:#e5f7ef; --amber:#f59e0b; --amber-soft:#fdf3e0;
+    --btn:#f5f5f7; --shadow:0 1px 2px rgba(0,0,0,.04),0 4px 16px rgba(0,0,0,.05);
+    --radius:22px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#000000; --card:#1c1c1e; --card2:#2c2c2e; --text:#f5f5f7; --muted:#98989d;
+      --line:rgba(255,255,255,.08); --accent:#0d84ff; --accent-soft:rgba(13,132,255,.18);
+      --green:#30d158; --green-soft:rgba(48,209,88,.16); --amber:#ffd60a; --amber-soft:rgba(255,214,10,.14);
+      --btn:#2c2c2e; --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 16px rgba(0,0,0,.35);
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei","MiSans",sans-serif;font-size:16px;line-height:1.5;-webkit-tap-highlight-color:transparent}
+  header{padding:28px 20px 4px}
+  header h1{font-size:26px;font-weight:700;margin:0 0 4px;letter-spacing:-.5px}
+  header p{margin:0;color:var(--muted);font-size:13.5px}
+  main{padding:6px 14px 84px;max-width:760px;margin:0 auto}
+  .sect{font-size:13px;font-weight:600;color:var(--muted);margin:20px 6px 8px;letter-spacing:.5px}
+  .card{background:var(--card);border:0;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;margin:0 0 4px}
+  .hint{color:var(--muted);font-size:13px;margin:8px 0 0;line-height:1.55}
+  .warn{background:var(--amber-soft);border:0;border-radius:16px;padding:12px 14px;font-size:13.5px;margin:10px 0;display:none;color:var(--text)}
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+  .kv{display:grid;grid-template-columns:repeat(2,1fr);gap:14px 12px;font-size:14px}
+  .kv b{font-weight:600}
+  .kv span{color:var(--muted);font-size:13px}
+  /* 0.4.54：状态卡内分组小标题（0.4.55 起只剩调度/游戏/渲染三组），
+     整行跨两列，带一条细分隔线和上一组拉开距离；值统一单行短文本，
+     卡片高度稳定。 */
+  .kvgroup{grid-column:1/-1;font-size:12.5px;font-weight:600;color:var(--muted);letter-spacing:.5px;padding-top:10px;border-top:1px solid var(--line)}
+  .kvgroup:first-child{padding-top:0;border-top:0}
+  button{appearance:none;border:0;background:var(--btn);color:var(--text);border-radius:16px;padding:13px 10px;font-size:15px;font-weight:600;min-height:52px;cursor:pointer;transition:transform .12s ease,background-color .15s ease,opacity .15s ease}
+  button:active{transform:scale(.96)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button.primary{background:var(--accent);color:#fff}
+  button.green{background:var(--green-soft);color:var(--green)}
+  .row{display:flex;gap:10px;flex-wrap:wrap}
+  .row button{flex:1 1 140px}
+  /* MIUI 风格开关：圆角轨道 + 滑动白圆钮，input 本身画，不用伪元素（WebView 里 input 的 ::before/::after 不渲染） */
+  .switch{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:13px 0;border-bottom:1px solid var(--line)}
+  .switch:last-child{border-bottom:0}
+  .switch input{
+    -webkit-appearance:none;appearance:none;flex:none;width:54px;height:36px;margin:0;border-radius:999px;
+    background-color:#d9d9de;background-image:radial-gradient(circle 13px,#fff 12px,transparent 13.5px);
+    background-size:26px 26px;background-position:3px 5px;background-repeat:no-repeat;cursor:pointer;
+    transition:background-color .2s ease,background-position .2s ease;
+  }
+  .switch input:checked{background-color:var(--accent);background-position:25px 5px}
+  .switch input:disabled{opacity:.4;cursor:not-allowed}
+  pre{background:var(--card2);border:0;border-radius:16px;padding:12px;white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.5;max-height:340px;overflow:auto;margin:12px 0 0;color:var(--text)}
+  .pill{display:inline-block;padding:3px 10px;border-radius:999px;background:var(--card2);font-size:13px;font-weight:600}
+  .pill.on{background:var(--green-soft);color:var(--green)}
+  /* 0.4.41：tab 栏。分段式药丸 tab，当前 tab 小米蓝底白字；只切显隐 */
+  /* 0.4.43：tab 栏改成悬浮胶囊（用户 2026-11-19 16:44 发参考图定）。
+     不再紧贴底边：左右各留 16px、离底边 12px，圆角 28px 胶囊形、
+     四周阴影、MIUIX 卡片底色；点 tab 还是瞬间显隐，不重新拉状态、不卡顿。
+     main 的底边距加到 136px，最后一张卡不会被它挡住；toast 抬到 112px。*/
+  /* 0.4.44：tab 栏精致化（用户 2026-11-19 16:57：再精致点 + 文字间距收小；
+     2026-11-19 17:01 又定：只留调度/功能两个切换页）。
+     骨架不动（fixed、左右 16px、离底 12px、圆角 28px）：胶囊加细边框
+     （var(--line)，深色模式也看得见）、阴影改柔和分层；tab 加过渡，
+     未选中用次要文字色 + 字重 500，选中蓝底白字 + 字重 600；文字间距收小——
+     胶囊 gap 8px→4px、tab 横向 padding 4px→2px、胶囊横向 padding 14px→10px；
+     tab 高 44px→40px（不低于 40px，要点得着）；不加 letter-spacing、不改字号。*/
+  /* 0.4.45：胶囊改小（用户 2026-11-19 17:30：“做那么大干嘛”）。
+     两页 tab 后整行撑满显得巨大：胶囊改 hug 内容——left:50% +
+     translateX(-50%) 居中、width:max-content 按内容撑，横向 padding
+     收到 6px；tab 不再 flex:1，flex:none、padding 8px 20px、
+     min-height 36px、字号 14px。0.4.44 的精致化（细边框、分层柔和
+     阴影、过渡、未选中次要色、选中蓝底白字 600）都保留；圆角按新
+     高度收到 24px；main 底边距跟着收到 84px，toast 抬到 76px。
+     0.4.48：她在截图上画了两条红线定宽度——胶囊居中、宽占屏幕
+     33%（min-width:240px 防窄屏挤压），两个 tab 改回 flex:1 均分
+     填满；选中态不再靠每个按钮自己变背景色（瞬间跳），改成胶囊里
+     一块绝对定位的滑动高亮（.thumb，小米蓝药丸），transform 250ms
+     ease 在两个位置间滑，文字颜色随之过渡。
+     0.4.49：0.4.48 给 pane 切换加的整页 180ms 淡入在真机上卡
+     （整页大图层每帧重绘 + showTab 里强制回流正卡在点击那一帧），
+     已去掉——切页恢复纯 display 显隐、点下立刻出，只剩滑动高亮。*/
+  .tabs{position:fixed;left:50%;transform:translateX(-50%);bottom:12px;z-index:10;display:flex;gap:4px;width:33%;min-width:240px;padding:6px 6px calc(6px + env(safe-area-inset-bottom));background:var(--card);border:1px solid var(--line);border-radius:24px;box-shadow:0 4px 16px rgba(0,0,0,.12),0 1px 4px rgba(0,0,0,.08);margin:0}
+  .tabs .thumb{position:absolute;left:6px;top:6px;bottom:calc(6px + env(safe-area-inset-bottom));width:calc(50% - 8px);border-radius:999px;background:var(--accent);transition:transform .25s ease;z-index:0}
+  .tabs .tab{position:relative;z-index:1;flex:1;min-height:36px;border-radius:999px;background:transparent;color:var(--muted);font-weight:500;padding:8px 20px;font-size:14px;transition:color .25s ease}
+  .tabs .tab.active{color:#fff;font-weight:600}
+  /* 0.4.44：日志类别改 pill chip（原来是下拉框）。沿用 tab 的 pill
+     语言：选中小米蓝底白字、未选中透明底次要文字色；点 chip 就切类别并
+     立即刷一次该类日志；类别键内部仍是英文，不进 exec 桥。*/
+  .logcats{display:flex;gap:6px;margin:2px 0 10px}
+  .logcats .logcat{flex:1;min-height:36px;border-radius:999px;background:transparent;color:var(--muted);font-weight:500;padding:6px 2px;font-size:14px;transition:background-color .15s ease,color .15s ease}
+  .logcats .logcat.active{background:var(--accent);color:#fff;font-weight:600}
+  #toast{position:fixed;left:50%;bottom:76px;transform:translateX(-50%);background:rgba(28,28,30,.92);color:#fff;padding:11px 18px;border-radius:999px;font-size:14px;display:none;max-width:92%;z-index:11;box-shadow:0 4px 20px rgba(0,0,0,.25)}
+  footer{color:var(--muted);font-size:12.5px;padding:0 6px;line-height:1.6}
+</style>
+</head>
+<body>
+<header>
+  <h1>一加平板 Pro · 性能调度</h1>
+  <p>骁龙 8 Gen 3 · 游戏模式 · KernelSU WebUI 面板</p>
+</header>
+<main>
+  <div class="warn" id="envWarn">不在 KernelSU WebUI 里打开（没有 ksu 桥），只能看界面，按钮不可用。请在 KernelSU 管理器里打开本模块的 WebUI。</div>
+
+  <div class="tabpane" id="pane-sched">
+  <h2 class="sect">实时状态</h2>
+  <section class="card">
+    <div class="kv">
+      <div class="kvgroup">调度</div>
+      <div><span>日常模式</span><br><b id="stMode">—</b></div>
+      <div><span>跟随 watch</span><br><b id="stWatch">—</b></div>
+      <div class="kvgroup">游戏</div>
+      <div><span>游戏模式</span><br><b id="stGame">—</b></div>
+      <div><span>运行中的游戏</span><br><b id="stGameRun">—</b></div>
+      <div><span>前台应用</span><br><b id="stFg">—</b></div>
+      <div class="kvgroup">渲染</div>
+      <div><span>系统界面</span><br><b id="stSysRenderer">—</b></div>
+      <div><span>全局 Vulkan</span><br><b id="stVulkanGlobal">—</b></div>
+    </div>
+    <p class="hint" id="stUpdated">自动刷新：打开面板后每 2 秒更新一次状态，检测到游戏 / 退出游戏时会弹提示。渲染组的系统界面每约 15 秒检测一次（不进 2 秒轮询）。</p>
+    <div class="row" style="margin-top:10px"><button id="btnRefresh" type="button">刷新状态</button></div>
+  </section>
+
+  <h2 class="sect">模式</h2>
+  <section class="card">
+    <div class="grid">
+      <button type="button" data-mode="powersave">省电</button>
+      <button type="button" data-mode="balanced">均衡</button>
+      <button type="button" data-mode="performance">性能</button>
+      <button type="button" class="primary" data-game="on">游戏</button>
+    </div>
+    <div class="row" style="margin-top:10px"><button id="btnBindNow" type="button">立即绑定</button></div>
+    <p class="hint">省电 / 均衡 / 性能会同时保存为开机默认模式。游戏是临时的，不改开机默认；点游戏后，打开下面“游戏跟随”让它自动绑，进游戏就自己绑上了。性能和游戏的差距：游戏在性能的基础上再加 GPU 下限 35%、uclamp 下限更高、后台收得更紧、按线程分类绑核。</p>
+  </section>
+
+  <h2 class="sect">游戏跟随</h2>
+  <section class="card">
+    <div class="switch">
+      <label for="tglWatchRun"><b>游戏跟随</b><br><span class="hint" style="margin:0">开着就全自动：进游戏自动绑线程、切游戏模式，退了切回均衡</span></label>
+      <input type="checkbox" id="tglWatchRun" aria-label="游戏跟随">
+    </div>
+    <div class="switch">
+      <label for="tglGameDetect"><b>游戏进程自动检测</b><br><span class="hint" style="margin:0">按游戏进程检测，不只看前台；切出去回消息也不掉档，进程退出后才切回</span></label>
+      <input type="checkbox" id="tglGameDetect" data-key="GAME_AUTO_DETECT" aria-label="游戏进程自动检测">
+    </div>
+    <div class="switch">
+      <label for="tglCleanBg"><b>进游戏自动清理后台</b><br><span class="hint" style="margin:0">检测到游戏时清掉后台闲置应用，只清 cached 的，不动游戏、音乐、输入法；每局只清一次</span></label>
+      <input type="checkbox" id="tglCleanBg" data-key="GAME_CLEAN_BACKGROUND" aria-label="进游戏自动清理后台">
+    </div>
+    <div class="switch">
+      <label for="tglGameSched"><b>游戏调度联动</b><br><span class="hint" style="margin:0">识别到游戏时自动切游戏模式，退出切回均衡</span></label>
+      <input type="checkbox" id="tglGameSched" data-key="GAME_SCHED_ENABLED" aria-label="游戏调度联动">
+    </div>
+    <div class="switch">
+      <label for="tglWatchBoot"><b>开机自动跟随</b><br><span class="hint" style="margin:0">重启后自动启动 watch（service.sh）</span></label>
+      <input type="checkbox" id="tglWatchBoot" data-key="AUTO_WATCH_ON_BOOT" aria-label="开机自动跟随">
+    </div>
+    <p class="hint">跟随开着就不用管了。想手动绑别的 App、看线程分类表，先跟我说，我帮你跑。系统关键进程自动模式永远不碰。</p>
+  </section>
+  </div>
+
+  <!-- 0.4.44：只留调度/功能两个切换页。0.4.54：功能页按温控、内存、
+       图形、诊断与日志四类分开，各带各的小标题；互传区整段删（hook
+       照常打包、刷模块时装、开机 ensure，都不在面板里了），互传诊断
+       按钮并入日志区同一张卡。实时状态只在调度页有。-->
+  <div class="tabpane" id="pane-func" style="display:none">
+  <h2 class="sect">温控</h2>
+  <section class="card">
+    <div class="switch">
+      <label for="tglThermal"><b>去温控</b><br><span class="hint" style="margin:0">Extreme GT 去温控：去锁帧、不降频，机器会更烫；打开后重启一次完全生效</span></label>
+      <input type="checkbox" id="tglThermal" data-key="THERMAL_REMOVE" aria-label="去温控">
+    </div>
+    <div class="switch">
+      <label for="tglThermalAuto"><b>进游戏自动去温控</b><br><span class="hint" style="margin:0">检测到游戏自动开去温控、退游戏自动关；手动“去温控”开关开着时这个不起作用</span></label>
+      <input type="checkbox" id="tglThermalAuto" data-key="THERMAL_AUTO_GAME" aria-label="进游戏自动去温控">
+    </div>
+  </section>
+
+  <h2 class="sect">内存压缩 (zram)</h2>
+  <section class="card">
+    <div class="kv">
+      <div><span>当前算法</span><br><b id="zrAlgo">—</b></div>
+      <div><span>大小</span><br><b id="zrSize">—</b></div>
+      <div><span>已换出（未压缩）</span><br><b id="zrUsed">—</b></div>
+      <div><span>已压缩</span><br><b id="zrCompr">—</b></div>
+    </div>
+    <p class="hint">算法（只显示设备上真正有的）</p>
+    <div class="row" id="zrAlgos"><span class="hint">读取中…</span></div>
+    <p class="hint">大小</p>
+    <div class="row" id="zrSizes">
+      <button type="button" data-zsize="2">2 GB</button>
+      <button type="button" data-zsize="4">4 GB</button>
+      <button type="button" data-zsize="6">6 GB</button>
+      <button type="button" data-zsize="8">8 GB</button>
+      <button type="button" data-zsize="12">12 GB</button>
+      <button type="button" data-zsize="16">16 GB</button>
+      <button type="button" data-zsize="24">24 GB</button>
+      <button type="button" data-zsize="32">32 GB</button>
+    </div>
+    <div class="row" style="margin-top:12px"><button id="btnZramApply" type="button" class="primary">应用</button></div>
+    <p class="hint">切换要先把已换出的数据搬回内存，空闲内存不够会拒绝，不会硬切。和当前一样的项不重复切。</p>
+  </section>
+
+  <h2 class="sect">图形</h2>
+  <section class="card">
+    <div class="switch">
+      <label for="tglVulkan"><b>全局 Vulkan</b><br><span class="hint" style="margin:0">开启后重启平板，全系统界面渲染走 Vulkan（游戏内部用不用 Vulkan 由游戏自己决定）。开关会写模块的 system.prop 并立即改当前属性：新启动的应用先生效，完全生效要重启。开没开看调度页实时状态的渲染组</span></label>
+      <input type="checkbox" id="tglVulkan" data-key="VULKAN_GLOBAL" aria-label="全局 Vulkan">
+    </div>
+  </section>
+
+  <h2 class="sect">诊断与日志</h2>
+  <section class="card">
+    <div class="logcats" id="logCats" role="tablist" aria-label="日志类别">
+      <button type="button" class="logcat active" data-logcat="sched">调度</button>
+      <button type="button" class="logcat" data-logcat="thermal">温控</button>
+      <button type="button" class="logcat" data-logcat="zram">内存</button>
+      <button type="button" class="logcat" data-logcat="diag">诊断</button>
+    </div>
+    <div class="row">
+      <button type="button" id="btnLog">查看日志</button>
+      <button type="button" id="btnClearLog">清空日志</button>
+      <button type="button" id="btnVerify">只读体检</button>
+      <button type="button" id="btnUclampDiag">uclamp 诊断</button>
+      <button type="button" id="btnOshareDiag">互传诊断</button>
+    </div>
+    <pre id="out">点上面按钮后，结果显示在这里。日志按类别分文件（都在内部存储根目录的“调度器日志”文件夹里，文件管理器直接能打开）：调度日志.log / 温控日志.log / 内存日志.log / 诊断日志.log。互传诊断把互传状态记进诊断日志：开着跑一次、关着跑一次就能对比。</pre>
+    <p class="hint">只读体检不写任何节点，先看拓扑和两款游戏包名对不对得上。</p>
+  </section>
+  </div>
+
+  <footer>
+    <p>未在真机实测过全部组合：先跑“只读体检”，确认无误再绑核、再开跟随。觉得发热 / 掉电快 / 卡顿，点“均衡”，或禁用模块重启，重启即恢复原厂。一次只装一个调度类模块。</p>
+  </footer>
+</main>
+<div class="tabs" id="tabBar" role="tablist">
+  <span class="thumb" id="tabThumb"></span>
+  <button type="button" class="tab active" data-tab="sched" role="tab">调度</button>
+  <button type="button" class="tab" data-tab="func" role="tab">功能</button>
+</div>
+<div id="toast" role="status"></div>
+<script>
+(function(){
+  "use strict";
+  var FALLBACK_DIR = "/data/adb/modules/oneplus_pad_pro_sched";
+  var modDir = FALLBACK_DIR;
+  var busy = false;
+  var watchSwitchUntil = 0;
+  var toastTimer = null; // O17：存起来，连续 toast 时先清掉上一条的定时器
+  var lastUserOpSeq = 0; // S33：最后一次用户操作的序列号
+  var reqSeqCounter = 0; // S33：每次发状态请求都加 1
+  // 0.4.55：删了 S40 的 bootDoneFlag——轮询不再等启动完整刷新落定，
+  // 打开面板就起轮询，各刷新通道独立、互不阻塞（见启动段）。
+  var pollIntervalId = null; // O18：存起来，切后台时能停掉
+  var pollVisBound = false; // O18：visibilitychange 监听只绑一次
+  var logCat = "sched"; // 0.4.42：日志选择器当前类别（sched|thermal|zram|diag，默认调度；0.4.47 起 oshare 类别退役）
+  var $ = function(id){ return document.getElementById(id); };
+  var outEl = $("out");
+
+  function showToast(msg){
+    var t = $("toast");
+    t.textContent = msg;
+    t.style.display = "block";
+    if (toastTimer) clearTimeout(toastTimer); // O17：先清上一条的定时器，别提前藏掉这条
+    toastTimer = setTimeout(function(){ t.style.display = "none"; toastTimer = null; }, 2600);
+    try { if (window.ksu && typeof ksu.toast === "function") ksu.toast(msg); } catch(e){}
+  }
+  function setOut(text){ outEl.textContent = text || ""; }
+
+  function discoverDir(){
+    try {
+      if (typeof moduleInfo === "function") {
+        var m = moduleInfo();
+        if (m) {
+          if (typeof m === "string" && /^\/data\/adb\/modules\/[A-Za-z0-9_.\-]+$/.test(m)) return m;
+          var d = m.moduleDir || m.modulePath || m.dir || m.path;
+          if (typeof d === "string" && /^\/data\/adb\/modules\/[A-Za-z0-9_.\-]+$/.test(d)) return d;
+        }
+      }
+    } catch(e){}
+    try {
+      if (window.ksu && typeof ksu.moduleInfo === "function") {
+        var m2 = ksu.moduleInfo();
+        if (m2) {
+          if (typeof m2 === "string" && /^\/data\/adb\/modules\/[A-Za-z0-9_.\-]+$/.test(m2)) return m2;
+          var d2 = m2.moduleDir || m2.modulePath || m2.dir;
+          if (typeof d2 === "string" && /^\/data\/adb\/modules\/[A-Za-z0-9_.\-]+$/.test(d2)) return d2;
+        }
+      }
+    } catch(e){}
+    var mm = String(location.href).match(/\/data\/adb\/modules\/([A-Za-z0-9_.\-]+)\/webroot\//);
+    if (mm) return "/data/adb/modules/" + mm[1];
+    return FALLBACK_DIR;
+  }
+
+  // ksu 桥兼容层：KernelSU / KernelSU-Next / APatch / WebUI X 的 exec 形态不完全一样。
+  // 优先用回调名形态（官方 kernelsu 库就是这么包的），同时兼容同步返回字符串、
+  // Promise 返回 {errno,stdout,stderr} 或裸字符串的形态。
+  // ksu 桥兼容层：KernelSU / KernelSU-Next / APatch / WebUI X 的 exec 形态不完全一样。
+  // 优先用回调名形态（官方 kernelsu 库就是这么包的），同时兼容同步返回字符串、
+  // Promise 返回 {errno,stdout,stderr} 或裸字符串的形态。
+  // M4：宿主形态只在启动时探测一次（probeHost，用无副作用的 log 0），
+  // 记在 hostForm 里；已知形态直接调，不重试。未知形态时只读命令
+  // 2500ms 后用两参数形态补一次，写命令绝不重发（第一次调用没取消，
+  // 重发等于把同一条写命令跑两遍）。
+  var hostForm = null; // null=未知、3=三参数 exec(cmd,"{}",cb)、2=两参数 exec(cmd,cb)
+  function execCmd(cmd, opts){
+    opts = opts || {};
+    var readOnly = !!opts.readOnly;
+    var timeoutMs = opts.timeoutMs || 15000;
+    return new Promise(function(resolve){
+      if (typeof window.ksu === "undefined" || !window.ksu || typeof window.ksu.exec !== "function") {
+        resolve({errno: 127, stdout: "", stderr: "no ksu bridge"});
+        return;
+      }
+      var done = false;
+      var fallbackTimer = null;
+      var triedFallback = false;
+      var cbName = "__oneplus_cb_" + Date.now() + "_" + Math.floor(Math.random()*1000000);
+      var finish = function(r){
+        if (done) return; done = true;
+        if (fallbackTimer) { clearTimeout(fallbackTimer); fallbackTimer = null; }
+        try { delete window[cbName]; } catch(e){} // S37：各分支的重复 delete 保留作兜底，这里统一删
+        resolve({errno: Number(r && r.errno) || 0, stdout: String((r && r.stdout) || ""), stderr: String((r && r.stderr) || "")});
+      };
+      window[cbName] = function(a, b, c){
+        // 没补发过就回包，说明最初那次三参数调用有效。
+        if (hostForm === null && !triedFallback) hostForm = 3;
+        if (typeof a === "number") finish({errno: a, stdout: b || "", stderr: c || ""});
+        else if (typeof a === "string") finish({errno: 0, stdout: a, stderr: b || ""});
+        else if (a && typeof a === "object") finish({errno: Number(a.errno) || 0, stdout: a.stdout || "", stderr: a.stderr || ""});
+        else finish({errno: 0, stdout: "", stderr: ""});
+      };
+      var callForm = function(form){
+        if (form === 2) return window.ksu.exec(cmd, cbName);
+        return window.ksu.exec(cmd, "{}", cbName);
+      };
+      var callExec = function(useFallback){
+        var form = useFallback ? 2 : (hostForm || 3);
+        try {
+          return callForm(form);
+        } catch(e){
+          if (!useFallback && hostForm === null) {
+            try { var r2 = callForm(2); hostForm = 2; return r2; } catch(_){}
+          }
+          throw e;
+        }
+      };
+      var ret;
+      try { ret = callExec(false); } catch(e){
+        try { delete window[cbName]; } catch(_){}
+        finish({errno: 1, stdout: "", stderr: String(e && e.message || e)});
+        return;
+      }
+      // 有些宿主只认两参数回调形态：没回包就用两参数形态再试一次。
+      // 但只读命令才允许补发；写命令（mode/game/thread/thermal/zram set/set）
+      // 绝不重发——第一次调用并没有取消，重发等于把写命令跑两遍。
+      // 形态已知时也不补发。status 这类命令本身就可能超过 800ms
+      // （dumpsys 很慢），等到 2500ms 才补发，且只补一次。
+      if (readOnly && hostForm === null) {
+        fallbackTimer = setTimeout(function(){
+          if (!done && !triedFallback) {
+            triedFallback = true;
+            try { callExec(true); } catch(e){}
+          }
+        }, 2500);
+      }
+      if (ret && typeof ret.then === "function") {
+        if (hostForm === null) hostForm = 3;
+        ret.then(function(v){
+          if (typeof v === "string") finish({errno: 0, stdout: v, stderr: ""});
+          else if (v && typeof v === "object") finish({errno: Number(v.errno) || 0, stdout: v.stdout || "", stderr: v.stderr || ""});
+        }, function(e){ finish({errno: 1, stdout: "", stderr: String(e && e.message || e)}); });
+      } else if (typeof ret === "string") {
+        if (hostForm === null) hostForm = 3;
+        try { delete window[cbName]; } catch(e){}
+        finish({errno: 0, stdout: ret, stderr: ""});
+      } else if (ret && typeof ret === "object" && ("stdout" in ret || "errno" in ret)) {
+        if (hostForm === null) hostForm = 3;
+        try { delete window[cbName]; } catch(e){}
+        finish({errno: Number(ret.errno) || 0, stdout: ret.stdout || "", stderr: ret.stderr || ""});
+      }
+      setTimeout(function(){
+        if (!done) {
+          try { delete window[cbName]; } catch(e){}
+          // S38：root 侧的命令无法取消，超时不等于失败；文案写清楚，
+          // 调用方随后 refreshAll 会重新读状态确认。
+          setOut("命令超时（" + (timeoutMs / 1000) + " 秒未回包）：命令可能仍在执行，正在重新读取状态确认…");
+          finish({errno: 124, stdout: "", stderr: "exec timeout"});
+        }
+      }, timeoutMs);
+    });
+  }
+
+  // M4：按命令区分只读/写。只读命令允许 2500ms fallback；
+  // 写命令绝不重发。S38：完整 status 在 ColorOS 上 dumpsys 以秒计，
+  // 只对 status 用 25 秒超时，其他命令 15 秒。
+  var READONLY_RE = /^(status|state|get|log|verify|fg)([\s-]|$)|^zram status(\s|$)|^thread (gamedetect|detect)(\s|$)|^vulkan (status|probe)(\s|$)/;
+  function panelCmd(args){
+    var timeoutMs = (/^status/.test(args)) ? 25000 : 15000;
+    return execCmd("sh '" + modDir + "/sched/panel.sh' " + args, {readOnly: READONLY_RE.test(args), timeoutMs: timeoutMs});
+  }
+  // M4：启动时用一条无副作用命令探测一次宿主形态并缓存。
+  // panel.sh log 0 只读、无副作用、回包快。探测失败（超时）也不阻塞
+  // 启动，hostForm 保持 null，后续调用按原有逻辑走。
+  function probeHost(){
+    if (hostForm !== null) return Promise.resolve(true);
+    if (!hasBridge()) return Promise.resolve(false);
+    return new Promise(function(resolve){
+      var cmd = "sh '" + modDir + "/sched/panel.sh' log 0";
+      var done = false;
+      var t2 = null, tEnd = null;
+      var cb3 = "__oneplus_probe3_" + Date.now() + "_" + Math.floor(Math.random()*1000000);
+      var cb2 = "__oneplus_probe2_" + Date.now() + "_" + Math.floor(Math.random()*1000000);
+      var finishProbe = function(form){
+        if (done) return; done = true;
+        if (t2) clearTimeout(t2);
+        if (tEnd) clearTimeout(tEnd);
+        try { delete window[cb3]; } catch(e){}
+        try { delete window[cb2]; } catch(e){}
+        if (form) hostForm = form;
+        resolve(!!form);
+      };
+      window[cb3] = function(){ finishProbe(3); };
+      window[cb2] = function(){ finishProbe(2); };
+      var tryForm2 = function(){
+        if (done) return;
+        var ret2;
+        try { ret2 = window.ksu.exec(cmd, cb2); } catch(e){ finishProbe(null); return; }
+        if (ret2 && typeof ret2.then === "function") { finishProbe(2); return; }
+        if (typeof ret2 === "string" || (ret2 && typeof ret2 === "object" && ("stdout" in ret2 || "errno" in ret2))) { finishProbe(2); return; }
+        tEnd = setTimeout(function(){ finishProbe(null); }, 2500);
+      };
+      var ret;
+      try { ret = window.ksu.exec(cmd, "{}", cb3); } catch(e){ tryForm2(); return; }
+      if (ret && typeof ret.then === "function") { finishProbe(null); return; } // Promise 形态宿主：回调不回包，形态无从分辨，留给 execCmd 的 Promise 分支处理
+      if (typeof ret === "string" || (ret && typeof ret === "object" && ("stdout" in ret || "errno" in ret))) { finishProbe(3); return; }
+      t2 = setTimeout(tryForm2, 2500);
+    });
+  }
+  function parseKV(text){
+    var map = {};
+    String(text || "").split("\n").forEach(function(line){
+      var i = line.indexOf("=");
+      if (i > 0) {
+        var k = line.slice(0, i).trim();
+        var v = line.slice(i+1).trim().replace(/^"(.*)"$/, "$1");
+        if (k && !/^(#|\/\/)/.test(k)) map[k] = v;
+      }
+    });
+    return map;
+  }
+  function modeLabel(m){
+    return {balanced:"均衡", performance:"性能", powersave:"省电", game:"游戏", none:"无"}[m] || (m || "—");
+  }
+  // S45：与 execCmd 共用探测结果；探测是异步的，启动时还没完，
+  // 所以类型检查保留作兜底，不只认探测结果。
+  function hasBridge(){ return hostForm !== null || (typeof window.ksu !== "undefined" && window.ksu && typeof window.ksu.exec === "function"); }
+
+  function applyStatus(s){
+    if ("mode" in s) $("stMode").textContent = modeLabel(s.mode);
+    if ("game_mode" in s) {
+      $("stGame").textContent = modeLabel(s.game_mode);
+      $("stGame").className = (s.game_mode === "game") ? "pill on" : "";
+    }
+    // fast 状态里没有前台/温度字段：别用空值把上一次的结果擦掉。
+    if (s.foreground_pkg) $("stFg").textContent = s.foreground_pkg + (s.foreground_profile ? "（" + modeLabel(s.foreground_profile) + "）" : "");
+    else if (s.foreground_method === "none") $("stFg").textContent = "未识别到前台应用";
+    // 0.4.18 起 fast 状态也带运行中游戏字段，每 2 秒的自动轮询都会更新它。
+    if ("game_running_pkg" in s) {
+      $("stGameRun").textContent = s.game_running_pkg ? s.game_running_pkg + "（" + modeLabel(s.game_running_profile) + "）" : "无";
+      $("stGameRun").className = s.game_running_pkg ? "pill on" : "";
+    }
+    // S42：键缺失（回包截断）时保留旧值，别把“已停止”/“—”当真值写上去。
+    if ("watch" in s) {
+      $("stWatch").textContent = s.watch === "running" ? "运行中" : "已停止";
+      // 跟随开关的状态由 watch 实际状态同步（每 2 秒轮询）；刚点过开关
+      // 的 5 秒内别往回写，等 watch-start/stop 跑完。
+      if (Date.now() >= watchSwitchUntil) $("tglWatchRun").checked = (s.watch === "running");
+    }
+    // 0.4.55：状态卡只剩调度/游戏/渲染三组。内存组字段和渲染组
+    // 游戏行后端已停产，这里也不再读。
+    // 渲染组：值来自 vulkan.sh probe 的缓存（后端只按时间戳判
+    // 新鲜，过期给 detecting，这里显示“检测中…”而不是旧值）。
+    var REND_LABEL = {vulkan: "Vulkan", opengl: "OpenGL", detecting: "检测中…", unknown: "未知"};
+    if ("sys_renderer" in s) $("stSysRenderer").textContent = REND_LABEL[s.sys_renderer] || s.sys_renderer;
+    if ("vulkan_global" in s) $("stVulkanGlobal").textContent = (s.vulkan_global === "1") ? "开" : "关";
+  }
+  // O20：config 里缺失 key 时按显式默认值同步，别停在 HTML 默认未选中。
+  var CONFIG_DEFAULTS = {GAME_SCHED_ENABLED: "1", GAME_AUTO_DETECT: "1", GAME_CLEAN_BACKGROUND: "1", AUTO_WATCH_ON_BOOT: "0", THERMAL_REMOVE: "0", THERMAL_AUTO_GAME: "1", VULKAN_GLOBAL: "0"};
+  function applyConfig(cfg){
+    document.querySelectorAll("[data-key]").forEach(function(el){
+      var k = el.getAttribute("data-key");
+      var v = (k in cfg) ? cfg[k] : CONFIG_DEFAULTS[k];
+      if (v === undefined) return;
+      if (el.type === "checkbox") el.checked = (v === "1");
+      else el.value = v;
+    });
+  }
+  function refreshStatus(){
+    var mySeq = ++reqSeqCounter; // S33：记下发出时的序列号
+    return panelCmd("status").then(function(r){
+      if (mySeq < lastUserOpSeq) return null; // 比最后一次用户操作还早发出的回包直接丢弃
+      if (r.errno !== 0) { setOut("状态读取失败：\n" + (r.stderr || r.stdout || ("errno " + r.errno))); return null; }
+      var s = parseKV(r.stdout);
+      applyStatus(s);
+      return s;
+    });
+  }
+  // 日常刷新：一次 state 调用同时拿状态（fast，跳过 dumpsys）和配置，
+  // 原来是 status + get 两次调用，每次都要等 dumpsys，点一下卡几秒。
+  function refreshState(){
+    var mySeq = ++reqSeqCounter; // S33：记下发出时的序列号
+    return panelCmd("state").then(function(r){
+      if (mySeq < lastUserOpSeq) return null; // 比最后一次用户操作还早发出的回包直接丢弃
+      if (r.errno !== 0) { setOut("状态读取失败：\n" + (r.stderr || r.stdout || ("errno " + r.errno))); return null; }
+      var parts = String(r.stdout || "").split("---CONFIG---");
+      var s = parseKV(parts[0] || "");
+      applyStatus(s);
+      if (parts[1] !== undefined) applyConfig(parseKV(parts[1]));
+      return s;
+    });
+  }
+  function loadConfig(){
+    return panelCmd("get").then(function(r){
+      if (r.errno !== 0) return {};
+      var cfg = parseKV(r.stdout);
+      applyConfig(cfg);
+      return cfg;
+    });
+  }
+  // 日常刷新走 refreshState（一次调用）。完整版（带前台识别）只在
+  // 首次打开和点“刷新状态”时用；0.4.55 起完整版不再顺带跑
+  // vulkan probe（太慢），渲染缓存只靠 15 秒定时器刷新。
+  function refreshAll(){
+    if (!hasBridge()) return Promise.resolve();
+    return refreshState().catch(function(e){ setOut("刷新失败：" + e); });
+  }
+  function refreshFull(){
+    if (!hasBridge()) return Promise.resolve();
+    return refreshStatus().then(loadConfig).catch(function(e){ setOut("刷新失败：" + e); });
+  }
+  function withBusy(fn){
+    if (busy) return Promise.resolve();
+    busy = true;
+    // M18：连点开关时 busy 会吞掉第二个 change，开关视觉翻过去了但
+    // 配置没写；执行期间把 checkbox 和 button 一起禁用。
+    // S36：结束时按锁住前的原始 disabled 恢复，而不是一律放开
+    // （refreshZram 可能正当把“应用”禁着）。
+    var btns = Array.prototype.slice.call(document.querySelectorAll("button:not([data-tab])"));
+    // 0.4.41：tab 按钮不参与 busy 禁用——切 tab 是纯显隐，不调任何命令，
+    // 操作进行中也能瞬间切换；切 tab 本身也不碰 busy 状态，不会打断正在进行的操作。
+    var cbs = Array.prototype.slice.call(document.querySelectorAll("input[type=checkbox]"));
+    var btnWas = btns.map(function(b){ return b.disabled; });
+    var cbWas = cbs.map(function(c){ return c.disabled; });
+    btns.forEach(function(b){ b.disabled = true; });
+    cbs.forEach(function(c){ c.disabled = true; });
+    var restore = function(){
+      busy = false;
+      btns.forEach(function(b, i){ b.disabled = btnWas[i]; });
+      cbs.forEach(function(c, i){ c.disabled = cbWas[i]; });
+    };
+    // 先让界面画出“已点中 / 执行中”，再去调 root 命令。原来是点下去
+    // 立刻进 ksu.exec 等结果，WebView 没机会重绘，感觉像点下去没反应。
+    setOut("执行中，请稍等…");
+    return new Promise(function(resolve, reject){
+      setTimeout(function(){
+        Promise.resolve().then(fn).then(function(v){
+          restore();
+          resolve(v);
+        }, function(e){
+          restore();
+          setOut("操作失败：" + e);
+          reject(e);
+        });
+      }, 30);
+    });
+  }
+  function runAndShow(args, okMsg){
+    return panelCmd(args).then(function(r){
+      var text = (r.stdout || "") + (r.stderr ? "\n" + r.stderr : "");
+      setOut(text || ("errno " + r.errno));
+      if (r.errno === 0) showToast(okMsg || "已完成");
+      return r;
+    });
+  }
+
+  // 模式按钮：一次 mode 调用同时保存 MODE 并套用，原来是 set + apply
+  // + status + get 四次调用，点一下要等四轮 root 命令。
+  // 0.4.32：点下去先立刻改状态显示（乐观更新），再跑 root 命令；
+  // 原来是等命令 + 刷新回来才改，点下去要 1 秒多才有反应，感觉卡。
+  // 命令失败时随后那次 refreshAll 会把显示纠回来。
+  document.querySelectorAll("[data-mode]").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var mode = btn.getAttribute("data-mode");
+      lastUserOpSeq = ++reqSeqCounter; // S33：记下这次用户操作，后到的旧回包不覆盖
+      $("stMode").textContent = modeLabel(mode);
+      withBusy(function(){
+        return runAndShow("mode " + mode, "已切到" + modeLabel(mode)).then(refreshAll);
+      });
+    });
+  });
+  document.querySelectorAll("[data-game]").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      // M19：game off 分支已删——没有任何按钮能走到它；game off 只走
+      // 面板外（thread.sh game off / watch-stop 时自动切回均衡）。
+      lastUserOpSeq = ++reqSeqCounter; // S33：记下这次用户操作，后到的旧回包不覆盖
+      $("stGame").textContent = modeLabel("game");
+      withBusy(function(){
+        return runAndShow("game on", "已切到游戏模式").then(function(r){
+          // S34：runAndShow 在 errno!=0 时只 resolve 不 reject，
+          // 每步必须显式查 errno，失败就停链，别继续绑核。
+          if (r.errno !== 0) {
+            showToast("切游戏模式失败：" + (r.stderr || r.stdout || ("errno " + r.errno)));
+            return refreshAll();
+          }
+          return panelCmd("thread gamedetect").then(function(gd){
+            if (gd.errno !== 0) {
+              showToast("检测失败：" + (gd.stderr || gd.stdout || ("errno " + gd.errno)));
+              return refreshAll();
+            }
+            var g = parseKV(gd.stdout || "");
+            if (g.game_running_pkg) {
+              return runAndShow("thread auto", "已绑定当前游戏线程").then(function(ra){
+                if (ra.errno !== 0) showToast("绑定失败：" + (ra.stderr || ra.stdout || ("errno " + ra.errno)));
+                return refreshAll();
+              });
+            }
+            showToast("已切游戏模式，进游戏后点“立即绑定”");
+            return refreshAll();
+          });
+        });
+      });
+    });
+  });
+
+  // M19：手动绑核按钮。调已验证真实的 thread auto；失败时 toast 失败原因。
+  $("btnBindNow").addEventListener("click", function(){
+    withBusy(function(){
+      return runAndShow("thread auto", "已绑定当前游戏/前台线程").then(function(r){
+        if (r.errno !== 0) showToast("绑定失败：" + (r.stderr || r.stdout || ("errno " + r.errno)));
+        return refreshAll();
+      });
+    });
+  });
+
+  $("btnRefresh").addEventListener("click", function(){ withBusy(refreshFull); });
+  // 0.4.44：日志类别改 pill chip，不再用下拉。点 chip 就切类别并立即刷一次该类日志；
+  // 类别键仍是英文（sched|thermal|zram|diag），中文文件名只在脚本内部映射，
+  // 不经过 exec 桥。切换仍是瞬间完成，不重渲染整张卡。
+  document.querySelectorAll("[data-logcat]").forEach(function(b){
+    b.addEventListener("click", function(){
+      document.querySelectorAll("[data-logcat]").forEach(function(x){ x.classList.toggle("active", x === b); });
+      logCat = b.getAttribute("data-logcat");
+      withBusy(function(){ return runAndShow("log " + logCat + " 80", "日志已刷新"); });
+    });
+  });
+  $("btnLog").addEventListener("click", function(){ withBusy(function(){ return runAndShow("log " + logCat + " 80", "日志已刷新"); }); });
+  $("btnClearLog").addEventListener("click", function(){ withBusy(function(){ return runAndShow("clearlog " + logCat, "日志已清空"); }); });
+  $("btnVerify").addEventListener("click", function(){ withBusy(function(){ return runAndShow("verify", "体检完成"); }); });
+  // 0.4.37：uclamp 诊断。只记日志、不改调度：记各组 uclamp 权限+当前值、
+  // 试写失败项并记 rc/stderr、写完恢复原值、dmesg 尾巴。跑完看日志再定修法。
+  $("btnUclampDiag").addEventListener("click", function(){ withBusy(function(){ return runAndShow("uclamp-diag", "诊断已记入日志"); }); });
+  // 0.4.39：互传诊断。只记日志、不改任何东西：记互传版本、pm dump 过滤
+  // （service 类名 + broadcast action）、当前状态（服务/wifi p2p/设置项）、
+  // shared_prefs。开着跑一次、关着跑一次，两份日志对比再定常开命令。
+  $("btnOshareDiag").addEventListener("click", function(){ withBusy(function(){ return runAndShow("oshare-diag", "诊断已记入日志"); }); });
+
+  // 跟随开关（0.4.19）：一个开关代替原来的“开启跟随/停止跟随”两个按钮。
+  // 点开 = thread watch-start，点关 = thread watch-stop。开关本身的状态
+  // 由 applyStatus 每 2 秒按 watch 实际状态同步，刚点过 5 秒内不往回写。
+  $("tglWatchRun").addEventListener("change", function(){
+    var el = $("tglWatchRun");
+    var on = el.checked;
+    el.disabled = true;
+    watchSwitchUntil = Date.now() + 5000;
+    withBusy(function(){
+      return runAndShow(on ? "thread watch-start" : "thread watch-stop", on ? "跟随已开启" : "跟随已停止").then(function(r){
+        // S35：失败时立即清掉 5 秒保护，下一轮轮询马上把开关纠回来，
+        // 别让开关错着显示 5 秒；成功才保持保护。
+        if (r.errno !== 0) watchSwitchUntil = 0;
+        return refreshAll();
+      });
+    }).then(function(){ el.disabled = false; }, function(){ el.disabled = false; });
+  });
+
+  // 开关：只写这一项，不用刷新整页状态（开关本身的状态就是用户刚点的）。
+  // 0.4.15：tglGameDetect 也接上——0.4.14 只绑了另外两个开关，
+  // 游戏进程自动检测那个开关点了没反应。
+  // 0.4.30：tglThermalAuto 也接上（只写 THERMAL_AUTO_GAME 配置，立即生效，不用重启 watch）。
+  [$("tglGameSched"), $("tglGameDetect"), $("tglCleanBg"), $("tglWatchBoot"), $("tglThermalAuto")].forEach(function(el){
+    el.addEventListener("change", function(){
+      withBusy(function(){
+        var v = el.checked ? "1" : "0";
+        return panelCmd("set " + el.getAttribute("data-key") + " " + v).then(function(r){
+          setOut(r.stdout + (r.stderr ? "\n" + r.stderr : ""));
+          if (r.errno === 0) showToast("已保存");
+        });
+      });
+    });
+  });
+
+  // 去温控开关（0.4.29）：不能只写配置，要立即应用——点开就挂载替换
+  // 文件 + 伪装温度，点关就卸掉 + 恢复 horae。所以不走上面那个通用
+  // set 处理，单独调 panel.sh thermal on|off（它自己会写配置 + 写备份）。
+  // 开关状态照样由 applyConfig 按 THERMAL_REMOVE 同步。
+  $("tglThermal").addEventListener("change", function(){
+    var el = $("tglThermal");
+    var on = el.checked;
+    el.disabled = true;
+    withBusy(function(){
+      return runAndShow(on ? "thermal on" : "thermal off", on ? "去温控已开启" : "去温控已关闭").then(refreshAll);
+    }).then(function(){ el.disabled = false; }, function(){ el.disabled = false; });
+  });
+
+  // 全局 Vulkan 开关（0.4.56）：和去温控同款——不能只写配置，
+  // 要调 panel.sh vulkan on|off（写/删 system.prop 的 skiavk 行
+  // + resetprop 改当前属性 + 回读校验 + 写配置 VULKAN_GLOBAL）。
+  // 开关状态由 applyConfig 按 VULKAN_GLOBAL 同步。完全生效要
+  // 重启平板，toast 里写明。
+  $("tglVulkan").addEventListener("change", function(){
+    var el = $("tglVulkan");
+    var on = el.checked;
+    el.disabled = true;
+    withBusy(function(){
+      return runAndShow(on ? "vulkan on" : "vulkan off", on ? "全局 Vulkan 已开启，重启平板完全生效" : "全局 Vulkan 已关闭，重启平板完全生效").then(refreshAll);
+    }).then(function(){ el.disabled = false; }, function(){ el.disabled = false; });
+  });
+
+  // 0.4.41：tab 栏。只切显隐，不动任何已有行为；默认调度 tab。
+  // 0.4.44：只留调度/功能两个切换页——调度页里是状态卡 + 模式 + 跟随，
+  // 功能页里是温控、内存、图形、诊断与日志四个区上下叠着；状态卡从常驻
+  // 顶部移进调度页里，切到功能页时跟着藏起来（实时状态只在调度页有）。
+  // 切换不刷新、不碰开关状态、不清输出。控件 id 和 handler 一个没动，只是挪了位置。
+  // 0.4.48：切换加动画——滑动高亮（tabThumb）跟选中 tab 走，位置只由
+  // 当前选中决定，动画中途连点直接改目标、不会错位。状态切换、轮询、
+  // withBusy 逻辑全不变。
+  // 0.4.49：0.4.48 同时加的整页淡入真机上卡，已删——切页就是纯显隐，
+  // 不加 class、不强制回流，点下立刻出；只保留胶囊里的滑动高亮。
+  var TAB_NAMES = ["sched", "func"];
+  var tabThumb = $("tabThumb");
+  function showTab(name){
+    TAB_NAMES.forEach(function(n){
+      var pane = $("pane-" + n);
+      if (!pane) return;
+      if (n === name) {
+        pane.style.display = "";
+      } else {
+        pane.style.display = "none";
+      }
+    });
+    document.querySelectorAll("[data-tab]").forEach(function(b){
+      b.classList.toggle("active", b.getAttribute("data-tab") === name);
+    });
+    if (tabThumb) {
+      tabThumb.style.transform = (name === "func") ? "translateX(calc(100% + 4px))" : "translateX(0)";
+    }
+  }
+  document.querySelectorAll("[data-tab]").forEach(function(b){
+    b.addEventListener("click", function(){ showTab(b.getAttribute("data-tab")); });
+  });
+
+  // zram（0.4.23）：算法和大小。算法按钮按设备上真正有的动态生成，
+  // 大小是固定几档。选好点“应用”，后台切，6 秒后自动刷新状态确认。
+  var zrSelAlgo = "";
+  var zrSelSize = 0;
+  function fmtBytes(v){
+    var n = Number(v);
+    if (!isFinite(n) || n <= 0) return "—";
+    if (n >= 1073741824) return (n / 1073741824).toFixed(1) + " GB";
+    if (n >= 1048576) return (n / 1048576).toFixed(0) + " MB";
+    return String(n) + " B";
+  }
+  function markZramSel(){
+    document.querySelectorAll("[data-zalgo]").forEach(function(b){
+      b.className = (b.getAttribute("data-zalgo") === zrSelAlgo) ? "primary" : "";
+    });
+    document.querySelectorAll("[data-zsize]").forEach(function(b){
+      b.className = (Number(b.getAttribute("data-zsize")) === zrSelSize) ? "primary" : "";
+    });
+  }
+  function refreshZram(){
+    if (!hasBridge()) return Promise.resolve();
+    if (busy) return Promise.resolve(); // S36：withBusy 执行中途别碰按钮状态
+    return panelCmd("zram status").then(function(r){
+      var box = $("zrAlgos");
+      if (r.errno !== 0 || !r.stdout) {
+        $("zrAlgo").textContent = "无 zram";
+        $("zrSize").textContent = "—"; $("zrUsed").textContent = "—"; $("zrCompr").textContent = "—";
+        zramHint("本机没有 zram");
+        $("btnZramApply").disabled = true;
+        return;
+      }
+      var s = parseKV(r.stdout);
+      if (s.zram !== "yes") {
+        $("zrAlgo").textContent = "无 zram";
+        $("zrSize").textContent = "—"; $("zrUsed").textContent = "—"; $("zrCompr").textContent = "—";
+        zramHint(s.zram_msg || "本机没有 zram");
+        $("btnZramApply").disabled = true;
+        return;
+      }
+      $("btnZramApply").disabled = false;
+      $("zrAlgo").textContent = s.algo || "—";
+      $("zrSize").textContent = s.disksize_gb ? s.disksize_gb + " GB" : fmtBytes(s.disksize);
+      $("zrUsed").textContent = fmtBytes(s.orig_data_size);
+      $("zrCompr").textContent = fmtBytes(s.compr_data_size);
+      if (!zrSelAlgo) zrSelAlgo = s.algo || "";
+      if (!zrSelSize) zrSelSize = Number(s.disksize_gb) || 0;
+      // O19：算法名来自本机 root 输出，仍用 textContent + createElement，
+      // 不拼 innerHTML。
+      box.textContent = "";
+      var anyAlgo = false;
+      String(s.algos || "").split(" ").forEach(function(a){
+        if (!a) return;
+        anyAlgo = true;
+        var b = document.createElement("button");
+        b.type = "button";
+        b.setAttribute("data-zalgo", a);
+        b.textContent = a;
+        b.addEventListener("click", function(){ zrSelAlgo = b.getAttribute("data-zalgo"); markZramSel(); });
+        box.appendChild(b);
+      });
+      if (!anyAlgo) zramHint("读不到可用算法");
+      markZramSel();
+    });
+  }
+  // O19：zram 提示文字用 textContent，不拼 innerHTML。
+  function zramHint(text){
+    var box = $("zrAlgos");
+    box.textContent = "";
+    var sp = document.createElement("span");
+    sp.className = "hint";
+    sp.textContent = text;
+    box.appendChild(sp);
+  }
+  document.querySelectorAll("[data-zsize]").forEach(function(b){
+    b.addEventListener("click", function(){ zrSelSize = Number(b.getAttribute("data-zsize")); markZramSel(); });
+  });
+  $("btnZramApply").addEventListener("click", function(){
+    if (!zrSelAlgo || !zrSelSize) { showToast("先选算法和大小"); return; }
+    withBusy(function(){
+      return panelCmd("zram set " + zrSelAlgo + " " + zrSelSize).then(function(r){
+        var text = (r.stdout || "") + (r.stderr ? "\n" + r.stderr : "");
+        setOut(text || ("errno " + r.errno));
+        if (r.errno === 0) {
+          showToast("正在切换，正在确认切换结果…");
+          // S41：zram set 在 panel.sh 侧是后台跑的，6 秒后可能还读到
+          // 旧值；6/12/20 秒各刷一次，值变了就停，三次都没变再提示手动确认。
+          var oldAlgo = $("zrAlgo").textContent;
+          var oldSize = $("zrSize").textContent;
+          var delays = [6000, 8000]; // 第 1 次 6 秒后，第 2 次再 6 秒（12 秒），第 3 次再 8 秒（20 秒）
+          var step = 0;
+          var targetReached = function(){
+            return $("zrAlgo").textContent === zrSelAlgo && String($("zrSize").textContent).indexOf(zrSelSize + " GB") === 0;
+          };
+          var pollZram = function(){
+            refreshZram().then(function(){
+              if (targetReached() || $("zrAlgo").textContent !== oldAlgo || $("zrSize").textContent !== oldSize) return;
+              if (step < delays.length) { setTimeout(pollZram, delays[step]); step++; }
+              else showToast("切换可能还在进行，手动点刷新状态确认");
+            });
+          };
+          setTimeout(pollZram, 6000);
+        }
+        return r;
+      });
+    });
+  });
+
+  // 自动轮询（0.4.18）：打开面板后每 2 秒刷一次 fast 状态，不用手动点
+  // “刷新状态”。fast 不含前台识别和渲染检测，一次不到半秒，不怎么耗电。
+  // 正在点按钮（busy）或上一轮还没回来时跳过这一拍，不堆命令；
+  // 切到别的 App 时停掉，回来立刻刷一次。游戏出现 / 退出时弹一次提示。
+  // 0.4.54：渲染检测（probe，要 dumpsys，秒级）单独走约 15 秒的
+  // 定时器，绝不进 2 秒轮询；probe 回来的字段直接喂 applyStatus，
+  // 后端状态那边只读它写好的缓存（0.4.55 起完整 status 也不再
+  // 同步跑 probe，缓存只靠这个定时器刷新）。
+  var pollInFlight = false;
+  var probeInFlight = false;
+  var probeIntervalId = null;
+  var lastGameRun = undefined;
+  function fmtClock(d){
+    function p(n){ return (n < 10 ? "0" : "") + n; }
+    return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+  }
+  function pollTick(){
+    if (!hasBridge() || busy || pollInFlight || document.hidden) return;
+    pollInFlight = true;
+    refreshState().then(function(s){
+      pollInFlight = false;
+      if (!s) { $("stUpdated").textContent = "自动刷新失败 " + fmtClock(new Date()) + "，点“刷新状态”重试"; return; }
+      $("stUpdated").textContent = "自动刷新中 · 最后更新 " + fmtClock(new Date());
+      var gr = s.game_running_pkg || "";
+      if (lastGameRun !== undefined && gr !== lastGameRun) {
+        if (gr) showToast("检测到游戏：" + gr);
+        else showToast("游戏已退出，已切回均衡");
+      }
+      lastGameRun = gr;
+    }, function(){
+      pollInFlight = false;
+      $("stUpdated").textContent = "自动刷新失败 " + fmtClock(new Date()) + "，点“刷新状态”重试";
+    });
+  }
+  function probeTick(){
+    if (!hasBridge() || busy || probeInFlight || document.hidden) return;
+    probeInFlight = true;
+    panelCmd("vulkan probe").then(function(r){
+      probeInFlight = false;
+      if (r.errno === 0 && r.stdout) applyStatus(parseKV(r.stdout));
+    }, function(){ probeInFlight = false; });
+  }
+  function startPolling(){
+    if (pollIntervalId) clearInterval(pollIntervalId);
+    pollIntervalId = setInterval(pollTick, 2000);
+    if (probeIntervalId) clearInterval(probeIntervalId);
+    probeIntervalId = setInterval(probeTick, 15000);
+    if (!pollVisBound) {
+      pollVisBound = true;
+      document.addEventListener("visibilitychange", function(){
+        // O18：切后台时把 interval 停掉，别空转；回来重建并立刻刷一次。
+        if (document.hidden) {
+          if (pollIntervalId) { clearInterval(pollIntervalId); pollIntervalId = null; }
+          if (probeIntervalId) { clearInterval(probeIntervalId); probeIntervalId = null; }
+        } else {
+          if (!pollIntervalId) pollIntervalId = setInterval(pollTick, 2000);
+          if (!probeIntervalId) probeIntervalId = setInterval(probeTick, 15000);
+          pollTick();
+        }
+      });
+    }
+  }
+
+  // 启动
+  modDir = discoverDir();
+  if (!hasBridge()) {
+    $("envWarn").style.display = "block";
+    document.querySelectorAll("button").forEach(function(b){ b.disabled = true; });
+    document.querySelectorAll("input[type=checkbox]").forEach(function(c){ c.disabled = true; }); // S43：无桥时开关也拨不动
+    setOut("面板文件已加载，但当前环境没有 ksu 桥，无法执行命令。\n请在 KernelSU 管理器 → 模块 → 本模块 → WebUI 里打开。\n模块目录：" + modDir);
+  } else {
+    // 0.4.55 启动顺序（她反馈 0.4.54 打开面板卡半天、状态全是 —）：
+    // 旧顺序是 probeHost → state → 完整 status（里面同步跑 vulkan
+    // probe，dumpsys 以秒计）全落定后才开轮询，任何一环卡住整页
+    // 就冻住。现在各通道独立、互不阻塞：
+    //   1. 配置先行：get 是纯文件读（cat config.conf），回来立刻
+    //      把开关/模式渲染出来，不等任何状态命令；
+    //   2. 2 秒轮询立刻起，并马上手动跑一拍 pollTick 刷 fast 状态；
+    //   3. 完整 status（含前台识别）和 zram 状态各自异步补，
+    //      慢/失败都不挡别的通道；
+    //   4. probeHost 只在后台探测宿主形态并缓存，不再串在启动
+    //      链上等它（execCmd 有形态兜底判断，不等也行）。
+    probeHost();
+    loadConfig();
+    startPolling();
+    pollTick();
+    refreshZram();
+    refreshStatus();
+  }
+})();
+</script>
+</body>
+</html>

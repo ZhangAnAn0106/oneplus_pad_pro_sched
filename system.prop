@@ -1,0 +1,7 @@
+# system.prop - 管理器（KernelSU/Magisk）开机自动加载的属性文件。
+#
+# 全局 Vulkan 开关（0.4.56）：面板开“全局 Vulkan”时，vulkan.sh
+# 往这里写一行（把 debug.hwui.renderer 设为 skiavk）；关时删行。
+# 默认只有注释、没有任何生效的属性行。别手工改这一行——用
+# 面板功能页图形区的“全局 Vulkan”开关，它会同时 resetprop
+# 改当前属性并写配置，手工改这里会和面板状态对不上。
